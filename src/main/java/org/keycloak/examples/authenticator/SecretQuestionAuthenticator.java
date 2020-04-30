@@ -17,43 +17,32 @@
 
 package org.keycloak.examples.authenticator;
 
+import com.google.common.base.Function;
+import com.google.zxing.common.StringUtils;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
-import org.jboss.resteasy.spi.HttpResponse;
 import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.AuthenticationFlowError;
 import org.keycloak.authentication.Authenticator;
-import org.keycloak.authentication.CredentialValidator;
-import org.keycloak.authentication.RequiredActionFactory;
-import org.keycloak.authentication.RequiredActionProvider;
-import org.keycloak.common.util.ServerCookie;
-import org.keycloak.credential.CredentialProvider;
-import org.keycloak.models.AuthenticatorConfigModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
-import org.keycloak.models.UserCredentialModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserProvider;
 import org.keycloak.representations.idm.OAuth2ErrorRepresentation;
 
 import javax.ws.rs.core.Cookie;
-import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 import java.io.IOException;
-import java.net.URI;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
 
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
-public class SecretQuestionAuthenticator implements Authenticator, CredentialValidator<SecretQuestionCredentialProvider> {
+public class SecretQuestionAuthenticator implements Authenticator {
     OkHttpClient client = new OkHttpClient().newBuilder().build();
 
     protected boolean hasCookie(AuthenticationFlowContext context) {
@@ -72,7 +61,7 @@ public class SecretQuestionAuthenticator implements Authenticator, CredentialVal
 
     @Override
     public void authenticate(AuthenticationFlowContext context) {
-        System.out.println("Inside authenticate");
+        System.out.println("Inside authenticate : new code");
         boolean validated = validateOtp(context);
         UserProvider userProvider = context.getSession().users();
         MultivaluedMap<String, String> decodedFormParameters = context.getHttpRequest().getDecodedFormParameters();
@@ -94,47 +83,13 @@ public class SecretQuestionAuthenticator implements Authenticator, CredentialVal
 
     @Override
     public void action(AuthenticationFlowContext context) {
-        System.out.println("action called");
-        boolean validated = validateAnswer(context);
-        if (!validated) {
-            Response challenge =  context.form()
-                    .setError("badSecret")
-                    .createForm("secret-question.ftl");
-            context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
-            return;
-        }
-        setCookie(context);
-        context.success();
-    }
-
-    protected void setCookie(AuthenticationFlowContext context) {
-        AuthenticatorConfigModel config = context.getAuthenticatorConfig();
-        int maxCookieAge = 60 * 60 * 24 * 30; // 30 days
-        if (config != null) {
-            maxCookieAge = Integer.valueOf(config.getConfig().get("cookie.max.age"));
-
-        }
-        URI uri = context.getUriInfo().getBaseUriBuilder().path("realms").path(context.getRealm().getName()).build();
-        addCookie(context, "SECRET_QUESTION_ANSWERED", "true",
-                uri.getRawPath(),
-                null, null,
-                maxCookieAge,
-                false, true);
-    }
-
-    public void addCookie(AuthenticationFlowContext context, String name, String value, String path, String domain, String comment, int maxAge, boolean secure, boolean httpOnly) {
-        HttpResponse response = context.getSession().getContext().getContextObject(HttpResponse.class);
-        StringBuffer cookieBuf = new StringBuffer();
-        ServerCookie.appendCookieValue(cookieBuf, 1, name, value, path, domain, comment, maxAge, secure, httpOnly, null);
-        String cookie = cookieBuf.toString();
-        response.getOutputHeaders().add(HttpHeaders.SET_COOKIE, cookie);
     }
 
     protected boolean validateOtp(AuthenticationFlowContext context) {
         MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
         String otp = formData.getFirst("otp");
         String sessionId = formData.getFirst("session_id");
-        if(otp.isEmpty() || sessionId.isEmpty()) {
+        if((otp == null || otp.isEmpty()) || (sessionId==null || sessionId.isEmpty()) ) {
             return false;
         }
         RequestBody body = RequestBody.create(okhttp3.MediaType.parse("application/json"),String.format( "{\"value\" : \"%s\"}",otp));
@@ -167,19 +122,6 @@ public class SecretQuestionAuthenticator implements Authenticator, CredentialVal
         }
     }
 
-    protected boolean validateAnswer(AuthenticationFlowContext context) {
-        MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
-        String secret = formData.getFirst("secret_answer");
-        String credentialId = formData.getFirst("credentialId");
-        if (credentialId == null || credentialId.isEmpty()) {
-            credentialId = getCredentialProvider(context.getSession())
-                    .getDefaultCredential(context.getSession(), context.getRealm(), context.getUser()).getId();
-        }
-
-        UserCredentialModel input = new UserCredentialModel(credentialId, getType(context.getSession()), secret);
-        return getCredentialProvider(context.getSession()).isValid(context.getRealm(), context.getUser(), input);
-    }
-
     @Override
     public boolean requiresUser() {
         return false;
@@ -187,26 +129,16 @@ public class SecretQuestionAuthenticator implements Authenticator, CredentialVal
 
     @Override
     public boolean configuredFor(KeycloakSession session, RealmModel realm, UserModel user) {
-        System.out.println("isconfiguredfor");
-        return getCredentialProvider(session).isConfiguredFor(realm, user, getType(session));
+        return true;
     }
 
     @Override
     public void setRequiredActions(KeycloakSession session, RealmModel realm, UserModel user) {
-        user.addRequiredAction(SecretQuestionRequiredAction.PROVIDER_ID);
-    }
-
-    public List<RequiredActionFactory> getRequiredActions(KeycloakSession session) {
-        return Collections.singletonList((SecretQuestionRequiredActionFactory)session.getKeycloakSessionFactory().getProviderFactory(RequiredActionProvider.class, SecretQuestionRequiredAction.PROVIDER_ID));
+//        user.addRequiredAction(SecretQuestionRequiredAction.PROVIDER_ID);
     }
 
     @Override
     public void close() {
 
-    }
-
-    @Override
-    public SecretQuestionCredentialProvider getCredentialProvider(KeycloakSession session) {
-        return (SecretQuestionCredentialProvider)session.getProvider(CredentialProvider.class, SecretQuestionCredentialProviderFactory.PROVIDER_ID);
     }
 }
