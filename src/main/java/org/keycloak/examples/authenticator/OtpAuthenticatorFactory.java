@@ -1,20 +1,3 @@
-/*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
- * and other contributors as indicated by the @author tags.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.keycloak.examples.authenticator;
 
 import org.keycloak.Config;
@@ -33,10 +16,10 @@ import java.util.List;
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
-public class SecretQuestionAuthenticatorFactory implements AuthenticatorFactory, ConfigurableAuthenticatorFactory {
+public class OtpAuthenticatorFactory implements AuthenticatorFactory, ConfigurableAuthenticatorFactory {
 
-    public static final String PROVIDER_ID = "secret-question-authenticator";
-    private static final SecretQuestionAuthenticator SINGLETON = new SecretQuestionAuthenticator();
+    public static final String PROVIDER_ID = "keycloak-otp-authenticator";
+    private static final OtpAuthenticator SINGLETON = new OtpAuthenticator();
 
     @Override
     public String getId() {
@@ -83,12 +66,14 @@ public class SecretQuestionAuthenticatorFactory implements AuthenticatorFactory,
         otpServiceHost.setLabel("Otp service hostname");
         otpServiceHost.setType(ProviderConfigProperty.STRING_TYPE);
         otpServiceHost.setHelpText("Otp service hostname");
+        otpServiceHost.setDefaultValue("otp");
         ProviderConfigProperty otpServicePort;
         otpServicePort = new ProviderConfigProperty();
         otpServicePort.setName("otp.port");
         otpServicePort.setLabel("Otp service port");
         otpServicePort.setType(ProviderConfigProperty.STRING_TYPE);
         otpServicePort.setHelpText("Otp service port");
+        otpServicePort.setDefaultValue("80");
 
         configProperties.add(otpServiceHost);
         configProperties.add(otpServicePort);
@@ -97,17 +82,17 @@ public class SecretQuestionAuthenticatorFactory implements AuthenticatorFactory,
 
     @Override
     public String getHelpText() {
-        return "A secret question that a user has to answer. i.e. What is your mother's maiden name.";
+        return "Authentication against OTP service";
     }
 
     @Override
     public String getDisplayType() {
-        return "Secret Question";
+        return "Otp Authenticator";
     }
 
     @Override
     public String getReferenceCategory() {
-        return "Secret Question";
+        return "Otp Authenticator";
     }
 
     @Override

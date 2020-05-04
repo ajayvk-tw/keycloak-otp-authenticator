@@ -1,24 +1,6 @@
-/*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
- * and other contributors as indicated by the @author tags.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.keycloak.examples.authenticator;
 
-import com.google.common.base.Function;
-import com.google.zxing.common.StringUtils;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
@@ -31,28 +13,16 @@ import org.keycloak.models.UserModel;
 import org.keycloak.models.UserProvider;
 import org.keycloak.representations.idm.OAuth2ErrorRepresentation;
 
-import javax.ws.rs.core.Cookie;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 import java.io.IOException;
+import java.util.AbstractMap;
+import java.util.HashMap;
 
 
-/**
- * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
- * @version $Revision: 1 $
- */
-public class SecretQuestionAuthenticator implements Authenticator {
+public class OtpAuthenticator implements Authenticator {
     OkHttpClient client = new OkHttpClient().newBuilder().build();
-
-    protected boolean hasCookie(AuthenticationFlowContext context) {
-        Cookie cookie = context.getHttpRequest().getHttpHeaders().getCookies().get("SECRET_QUESTION_ANSWERED");
-        boolean result = cookie != null;
-        if (result) {
-            System.out.println("Bypassing secret question because cookie is set");
-        }
-        return result;
-    }
 
     public Response errorResponse(int status, String error, String errorDescription) {
         OAuth2ErrorRepresentation errorRep = new OAuth2ErrorRepresentation(error, errorDescription);
@@ -61,23 +31,30 @@ public class SecretQuestionAuthenticator implements Authenticator {
 
     @Override
     public void authenticate(AuthenticationFlowContext context) {
-        System.out.println("Inside authenticate : new code");
-        boolean validated = validateOtp(context);
-        UserProvider userProvider = context.getSession().users();
         MultivaluedMap<String, String> decodedFormParameters = context.getHttpRequest().getDecodedFormParameters();
-        String username = decodedFormParameters.getFirst("username");
-        System.out.println(String.format("username : %s",username));
-        context.setUser(userProvider.getUserByUsername(username, context.getRealm()));
-        if (!validated) {
-            Response challengeResponse = errorResponse(Response.Status.UNAUTHORIZED.getStatusCode(), "invalid_otp", "Invalid otp");
-            context.failure(AuthenticationFlowError.INVALID_CREDENTIALS, challengeResponse );
+        String otp = decodedFormParameters.getFirst("otp");
+        String sessionId = decodedFormParameters.getFirst("session_id");
+        if((otp == null || otp.isEmpty()) || (sessionId==null || sessionId.isEmpty()) ) {
             context.attempted();
             return;
         }
-        System.out.println("Validation success");
-//        InMemoryUserAdapter user = new InMemoryUserAdapter(context.getSession(), context.getRealm(), username);
-        context.attempted();
-//        context.setUser();
+        AbstractMap.SimpleEntry<String, Boolean> validationEntry = validateOtp(context);
+        UserProvider userProvider = context.getSession().users();
+        String username = decodedFormParameters.getFirst("username");
+        context.setUser(userProvider.getUserByUsername(username, context.getRealm()));
+        if (!validationEntry.getValue()) {
+            ObjectMapper objectMapper = new ObjectMapper();
+            Response response;
+            try {
+                HashMap jsonObject = objectMapper.readValue(validationEntry.getKey().getBytes(), HashMap.class);
+                response =  errorResponse(Response.Status.UNAUTHORIZED.getStatusCode(),jsonObject.get("responseType").toString(),jsonObject.get("message").toString());
+            } catch (IOException e) {
+                e.printStackTrace();
+                response = errorResponse(Response.Status.UNAUTHORIZED.getStatusCode(),"Invalid OTP", "Invalid OTP");
+            }
+            context.failure(AuthenticationFlowError.INVALID_CREDENTIALS, response);
+            return;
+        }
         context.success();
     }
 
@@ -85,24 +62,18 @@ public class SecretQuestionAuthenticator implements Authenticator {
     public void action(AuthenticationFlowContext context) {
     }
 
-    protected boolean validateOtp(AuthenticationFlowContext context) {
+    protected AbstractMap.SimpleEntry<String, Boolean> validateOtp(AuthenticationFlowContext context) {
         MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
         String otp = formData.getFirst("otp");
         String sessionId = formData.getFirst("session_id");
-        if((otp == null || otp.isEmpty()) || (sessionId==null || sessionId.isEmpty()) ) {
-            return false;
-        }
         RequestBody body = RequestBody.create(okhttp3.MediaType.parse("application/json"),String.format( "{\"value\" : \"%s\"}",otp));
 
         String otpHost = context.getAuthenticatorConfig().getConfig().get("otp.hostname");
-        System.out.println(String.format("otphost is %s",otpHost));
         String otpPort = context.getAuthenticatorConfig().getConfig().get("otp.port");
-        System.out.println(String.format("otpport is %s",otpPort));
         String otpRequestUrl = String.format("http://%s",otpHost);
         if (!otpPort.isEmpty()) {
             otpRequestUrl = String.format("%s:%s",otpRequestUrl,otpPort);
         }
-        System.out.println(String.format("formed otprequesturl is %s",otpRequestUrl));
         Request request = new Request.Builder()
                 .url(String.format("%s/otp/%s/verify", otpRequestUrl, sessionId))
                 .method("POST", body)
@@ -110,15 +81,10 @@ public class SecretQuestionAuthenticator implements Authenticator {
                 .build();
         try {
             okhttp3.Response response = client.newCall(request).execute();
-            System.out.println(String.format("Status: %s",response.code()));
-            System.out.println(response.body().string());
-            if (response.code() == 200) {
-                return true;
-            }
-            return false;
+            String responseBody = response.body().string();
+            return new AbstractMap.SimpleEntry<>(responseBody, response.code() == 200);
         } catch (IOException e) {
-            e.printStackTrace();
-            return false;
+            return new AbstractMap.SimpleEntry<>("", false);
         }
     }
 
@@ -134,7 +100,6 @@ public class SecretQuestionAuthenticator implements Authenticator {
 
     @Override
     public void setRequiredActions(KeycloakSession session, RealmModel realm, UserModel user) {
-//        user.addRequiredAction(SecretQuestionRequiredAction.PROVIDER_ID);
     }
 
     @Override
